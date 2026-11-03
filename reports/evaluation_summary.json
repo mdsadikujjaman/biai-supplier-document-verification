@@ -1,0 +1,181 @@
+{
+  "timestamp": "2026-11-02T17:26:31Z",
+  "benchmark_summary": {
+    "total_documents": 10,
+    "correct_decisions": 10,
+    "accuracy_percentage": 100.0,
+    "false_approvals": 0,
+    "false_rejections": 0,
+    "false_reviews": 0,
+    "extraction_failure_count": 0,
+    "extraction_failure_rate_pct": 0.0,
+    "decision_distribution_actual": {
+      "APPROVE": 2,
+      "REJECT": 5,
+      "NEEDS HUMAN REVIEW": 3
+    },
+    "decision_distribution_expected": {
+      "APPROVE": 2,
+      "REJECT": 5,
+      "NEEDS HUMAN REVIEW": 3
+    },
+    "mean_processing_time_ms": 5.86,
+    "median_processing_time_ms": 5.07,
+    "min_processing_time_ms": 4.94,
+    "max_processing_time_ms": 12.07,
+    "p95_processing_time_ms": 12.07,
+    "all_packs_passed_benchmark": true
+  },
+  "document_evaluations": [
+    {
+      "document_name": "supplier-pack-01.pdf",
+      "supplier_name": "Padma Textile Mills Ltd",
+      "matched_item": "A",
+      "expected_decision": "APPROVE",
+      "actual_decision": "APPROVE",
+      "decision_correct": true,
+      "expected_primary_rule": null,
+      "triggered_rules": [],
+      "primary_reason": "All company rules passed, PR specifications met within tolerance, and all financial calculations verified without discrepancies.",
+      "processing_time_ms": 12.07,
+      "notes": "Fully compliant: Item A @ 472.00 BDT (PR max 480.00 BDT), 10% advance, 24d delivery, 1%/wk penalty, 15% VAT separated."
+    },
+    {
+      "document_name": "supplier-pack-02.pdf",
+      "supplier_name": "Jamuna Trims and Accessories",
+      "matched_item": "B",
+      "expected_decision": "APPROVE",
+      "actual_decision": "APPROVE",
+      "decision_correct": true,
+      "expected_primary_rule": null,
+      "triggered_rules": [],
+      "primary_reason": "All company rules passed, PR specifications met within tolerance, and all financial calculations verified without discrepancies.",
+      "processing_time_ms": 5.88,
+      "notes": "Fully compliant: Item B @ 36.00 BDT (PR max 38.00 BDT), 0% advance, 21d delivery, 0.75%/wk penalty, 15% VAT separated."
+    },
+    {
+      "document_name": "supplier-pack-03.pdf",
+      "supplier_name": "Karnaphuli Yarn Traders",
+      "matched_item": "C",
+      "expected_decision": "REJECT",
+      "actual_decision": "REJECT",
+      "decision_correct": true,
+      "expected_primary_rule": "REJECT_RULE_1",
+      "triggered_rules": [
+        "REJECT_RULE_1"
+      ],
+      "primary_reason": "Confirmed violation of Unit price exceeds PR maximum by > 3%: Quoted unit price (229.00 BDT) for item C is +9.05% above maximum price (210.00 BDT), exceeding the +3% ceiling (216.30 BDT).",
+      "processing_time_ms": 5.22,
+      "notes": "Reject Rule 1: Item C quoted at 229.00 BDT vs PR max 210.00 BDT (+9.05% > +3% ceiling of 216.30 BDT)."
+    },
+    {
+      "document_name": "supplier-pack-04.pdf",
+      "supplier_name": "Surma Packaging Industries",
+      "matched_item": "D",
+      "expected_decision": "NEEDS HUMAN REVIEW",
+      "actual_decision": "NEEDS HUMAN REVIEW",
+      "decision_correct": true,
+      "expected_primary_rule": "REVIEW_RULE_1",
+      "triggered_rules": [
+        "REVIEW_RULE_1"
+      ],
+      "primary_reason": "Review required under Unit price above maximum by <= 3%: Quoted unit price (6.65 BDT) for item D is +2.31% above PR maximum (6.50 BDT), which falls into the <= 3% discretionary review bracket.",
+      "processing_time_ms": 5.06,
+      "notes": "Review Rule 1: Item D quoted at 6.65 BDT vs PR max 6.50 BDT (+2.31% <= +3% review bracket)."
+    },
+    {
+      "document_name": "supplier-pack-05.pdf",
+      "supplier_name": "Meghna Carton Works",
+      "matched_item": "E",
+      "expected_decision": "REJECT",
+      "actual_decision": "REJECT",
+      "decision_correct": true,
+      "expected_primary_rule": "REJECT_RULE_2",
+      "triggered_rules": [
+        "REJECT_RULE_2",
+        "REVIEW_RULE_3"
+      ],
+      "primary_reason": "Confirmed violation of Advance payment exceeds 20%: Quoted advance payment is 40%, exceeding the maximum permitted 20%.",
+      "processing_time_ms": 5.4,
+      "notes": "Reject Rule 2: Advance payment of 40% exceeds the 20% policy limit."
+    },
+    {
+      "document_name": "supplier-pack-06.pdf",
+      "supplier_name": "Teesta Fabrics Ltd",
+      "matched_item": "A",
+      "expected_decision": "REJECT",
+      "actual_decision": "REJECT",
+      "decision_correct": true,
+      "expected_primary_rule": "REJECT_RULE_3",
+      "triggered_rules": [
+        "REJECT_RULE_3"
+      ],
+      "primary_reason": "Confirmed violation of Late-delivery penalty clause missing or insufficient: The contract omits any late-delivery penalty clause entirely.",
+      "processing_time_ms": 4.97,
+      "notes": "Reject Rule 3: Late-delivery penalty clause is completely omitted from Terms and Conditions."
+    },
+    {
+      "document_name": "supplier-pack-07.pdf",
+      "supplier_name": "Rupsha Zipper Factory",
+      "matched_item": "B",
+      "expected_decision": "NEEDS HUMAN REVIEW",
+      "actual_decision": "NEEDS HUMAN REVIEW",
+      "decision_correct": true,
+      "expected_primary_rule": "REVIEW_RULE_2",
+      "triggered_rules": [
+        "REVIEW_RULE_2"
+      ],
+      "primary_reason": "Review required under Quantity differs from requested by > 5%: Quoted quantity (16,500 piece) differs by -17.50% from requested (20,000 piece), exceeding the allowable 5% tolerance band.",
+      "processing_time_ms": 4.94,
+      "notes": "Review Rule 2: Quoted quantity of 16,500 pcs differs from requested 20,000 pcs by -17.50% (> \u00b15% tolerance)."
+    },
+    {
+      "document_name": "supplier-pack-08.pdf",
+      "supplier_name": "Bhairab Thread and Co",
+      "matched_item": "C",
+      "expected_decision": "REJECT",
+      "actual_decision": "REJECT",
+      "decision_correct": true,
+      "expected_primary_rule": "REJECT_RULE_4",
+      "triggered_rules": [
+        "REJECT_RULE_4"
+      ],
+      "primary_reason": "Confirmed violation of Supplier TIN or BIN missing: Supplier tax registration is missing required identifier(s): TIN, BIN.",
+      "processing_time_ms": 5.02,
+      "notes": "Reject Rule 4: Supplier TIN and BIN missing ('available upon contract award')."
+    },
+    {
+      "document_name": "supplier-pack-09.pdf",
+      "supplier_name": "Dhaleshwari Poly Pack",
+      "matched_item": "D",
+      "expected_decision": "NEEDS HUMAN REVIEW",
+      "actual_decision": "NEEDS HUMAN REVIEW",
+      "decision_correct": true,
+      "expected_primary_rule": "REVIEW_RULE_6",
+      "triggered_rules": [
+        "REVIEW_RULE_3",
+        "REVIEW_RULE_6"
+      ],
+      "primary_reason": "Review required under Payment terms unclear or outside 30 to 60 days: Payment credit terms are ambiguous, conditional, or subject to later agreement.",
+      "processing_time_ms": 5.09,
+      "notes": "Review Rule 6: Arithmetic discrepancy (50,000 * 6.40 = 320,000 BDT vs quoted 322,000 BDT) and Review Rule 3: ambiguous payment terms ('30 to 90 days as agreed')."
+    },
+    {
+      "document_name": "supplier-pack-10.pdf",
+      "supplier_name": "Kushiyara Box Industries",
+      "matched_item": "E",
+      "expected_decision": "REJECT",
+      "actual_decision": "REJECT",
+      "decision_correct": true,
+      "expected_primary_rule": "REJECT_RULE_5",
+      "triggered_rules": [
+        "REJECT_RULE_5",
+        "REVIEW_RULE_5",
+        "REVIEW_RULE_6"
+      ],
+      "primary_reason": "Confirmed violation of Delivery promised later than 45 days: Promised delivery timeline of 60 days exceeds the 45-day limit.",
+      "processing_time_ms": 4.98,
+      "notes": "Reject Rule 5: Delivery timeline of 60 days exceeds 45-day ceiling. Confirmed rejection overrides bundled VAT review trigger."
+    }
+  ]
+}
