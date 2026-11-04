@@ -30,6 +30,10 @@ temp/
 tmp/
 *.log
 reports/*.tmp
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
 
 # Operating system files
 .DS_Store

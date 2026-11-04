@@ -452,6 +452,12 @@ class DocumentVerificationReport(BaseModel):
     final_decision: DecisionEnum
     primary_reason: str
     rejection_confirmed: bool = False
+    all_decision_reasons: List[str] = Field(
+        default_factory=list, description="All contributing reasons for the final decision"
+    )
+    verification_id: Optional[str] = Field(
+        default=None, description="Unique verification execution identifier"
+    )
 
     arithmetic_audit: ArithmeticAuditResult
     pr_comparison: Optional[PRComparisonReport] = None
@@ -460,3 +466,5 @@ class DocumentVerificationReport(BaseModel):
     all_evaluated_rules: List[RuleCheckResult] = []
     supporting_evidence_quotes: List[str] = []
     processing_time_ms: float = 0.0
+    extracted_quotation: Optional[ExtractedQuotation] = None
+

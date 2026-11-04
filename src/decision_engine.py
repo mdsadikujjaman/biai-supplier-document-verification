@@ -1,7 +1,9 @@
+from decimal import Decimal
 import logging
 from pathlib import Path
 import time
 from typing import List, Optional, Union
+import uuid
 
 from src.arithmetic import ArithmeticVerifier
 from src.comparator import PurchaseRequestComparator
@@ -75,6 +77,8 @@ class DecisionEngine:
                 final_decision=DecisionEnum.NEEDS_HUMAN_REVIEW,
                 primary_reason=f"File not found at path: {doc_path}. Manual human investigation required.",
                 rejection_confirmed=False,
+                all_decision_reasons=[f"File not found at path: {doc_path}. Manual human investigation required."],
+                verification_id=str(uuid.uuid4()),
                 arithmetic_audit=ArithmeticAuditResult(),
                 extraction_uncertainties=[
                     ExtractionUncertainty(
@@ -103,6 +107,8 @@ class DecisionEngine:
                 final_decision=DecisionEnum.NEEDS_HUMAN_REVIEW,
                 primary_reason=f"Ingestion failure: {e}. Document requires human review.",
                 rejection_confirmed=False,
+                all_decision_reasons=[f"Ingestion failure: {e}. Document requires human review."],
+                verification_id=str(uuid.uuid4()),
                 arithmetic_audit=ArithmeticAuditResult(),
                 extraction_uncertainties=[
                     ExtractionUncertainty(
@@ -148,6 +154,16 @@ class DecisionEngine:
             is_readable=ingested_doc.is_readable,
         )
 
+        all_reasons = self._gather_all_decision_reasons(
+            decision=decision,
+            primary_reason=primary_reason,
+            all_rules=all_rules,
+            extraction_uncertainties=extraction_uncertainties,
+            math_audit=math_audit,
+            pr_comparison=pr_comparison,
+            is_readable=ingested_doc.is_readable,
+        )
+
         # Collect evidence quotes
         evidence_quotes = self._collect_evidence_quotes(all_rules, math_audit, pr_comparison)
 
@@ -168,6 +184,8 @@ class DecisionEngine:
             final_decision=decision,
             primary_reason=primary_reason,
             rejection_confirmed=rejection_confirmed,
+            all_decision_reasons=all_reasons,
+            verification_id=str(uuid.uuid4()),
             arithmetic_audit=math_audit,
             pr_comparison=pr_comparison,
             extraction_uncertainties=extraction_uncertainties,
@@ -175,6 +193,7 @@ class DecisionEngine:
             all_evaluated_rules=all_rules,
             supporting_evidence_quotes=evidence_quotes,
             processing_time_ms=round(elapsed_ms, 2),
+            extracted_quotation=quotation,
         )
 
     def verify_all(self, directory_or_files: Union[str, Path, List[Union[str, Path]]]) -> List[DocumentVerificationReport]:
@@ -322,6 +341,103 @@ class DecisionEngine:
             "and all financial calculations verified without discrepancies."
         )
         return DecisionEnum.APPROVE, reason, False
+
+    def _gather_all_decision_reasons(
+        self,
+        decision: DecisionEnum,
+        primary_reason: str,
+        all_rules: List[RuleCheckResult],
+        extraction_uncertainties: List[ExtractionUncertainty],
+        math_audit: ArithmeticAuditResult,
+        pr_comparison: PRComparisonReport,
+        is_readable: bool,
+    ) -> List[str]:
+        """Aggregates all contributing reasons for the final decision in non-technical language."""
+        reasons: List[str] = []
+
+        if decision == DecisionEnum.APPROVE:
+            return [primary_reason]
+
+        if decision == DecisionEnum.REJECT:
+            confirmed_rejections = [
+                r
+                for r in all_rules
+                if r.category == RuleCategory.REJECT and r.status == RuleStatus.FAIL and r.is_confirmed
+            ]
+            for r in confirmed_rejections:
+                msg = f"Confirmed violation of {r.rule_name}: {r.explanation}"
+                if msg not in reasons:
+                    reasons.append(msg)
+            return reasons if reasons else [primary_reason]
+
+        # Case: DecisionEnum.NEEDS_HUMAN_REVIEW
+        if not is_readable:
+            reasons.append("Document text layer is unreadable or blank. Manual human verification required.")
+
+        # 1. Triggered review rules
+        triggered_reviews = [
+            r
+            for r in all_rules
+            if r.category == RuleCategory.HUMAN_REVIEW and r.status == RuleStatus.FAIL
+        ]
+        for r in triggered_reviews:
+            if r.rule_id == "REVIEW_RULE_6" and math_audit.discrepancies:
+                for d in math_audit.discrepancies:
+                    q_val = d.quoted_value if d.quoted_value is not None else Decimal("0.00")
+                    e_val = d.expected_value if d.expected_value is not None else Decimal("0.00")
+                    diff_val = d.discrepancy_amount if d.discrepancy_amount is not None else abs(q_val - e_val)
+                    msg = (
+                        f"Financial arithmetic mismatch on {d.component.replace('_', ' ').title()}: "
+                        f"The quoted amount is BDT {q_val:,.2f}, the recalculated amount is BDT {e_val:,.2f}, "
+                        f"and the difference is BDT {diff_val:,.2f}."
+                    )
+                    if msg not in reasons:
+                        reasons.append(msg)
+            elif r.rule_id == "REVIEW_RULE_3":
+                if r.evidence_quote and ("30" in r.evidence_quote and "90" in r.evidence_quote):
+                    msg = 'Payment terms review: Payment terms are ambiguous: "30–90 days as agreed" (outside standard 30 to 60 day credit window).'
+                elif r.evidence_quote:
+                    msg = f"Payment terms review: {r.explanation} (Quote: '{r.evidence_quote.strip()}')."
+                else:
+                    msg = f"Payment terms review ({r.rule_name}): {r.explanation}"
+                if msg not in reasons:
+                    reasons.append(msg)
+            else:
+                msg = f"Review trigger ({r.rule_name}): {r.explanation}"
+                if msg not in reasons:
+                    reasons.append(msg)
+
+        # 2. Uncertain rules
+        for r in all_rules:
+            if r.status == RuleStatus.UNCERTAIN:
+                msg = f"Uncertainty in evaluating {r.rule_name}: {r.explanation}"
+                if msg not in reasons:
+                    reasons.append(msg)
+
+        # 3. Extraction uncertainties
+        for unc in extraction_uncertainties:
+            msg = f"Extraction uncertainty on '{unc.field_name}' ({unc.issue_type}): {unc.details}"
+            if msg not in reasons:
+                reasons.append(msg)
+
+        # 4. Arithmetic discrepancies not captured above
+        if not math_audit.all_passed and not any("Financial arithmetic mismatch" in s for s in reasons):
+            for det in math_audit.discrepancy_details:
+                msg = f"Financial arithmetic inconsistency: {det}"
+                if msg not in reasons:
+                    reasons.append(msg)
+
+        # 5. Purchase Request alignment notes
+        if pr_comparison.comparison_notes:
+            for note in pr_comparison.comparison_notes:
+                msg = f"Purchase Request alignment note: {note}"
+                if msg not in reasons:
+                    reasons.append(msg)
+
+        if not reasons:
+            reasons.append(primary_reason)
+
+        return reasons
 
     def _collect_evidence_quotes(
         self,

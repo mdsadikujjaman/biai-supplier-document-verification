@@ -30,6 +30,8 @@ class VerificationSettings(BaseSettings):
         default_factory=lambda: BASE_DIR / "sample_data" / "company-rules.md"
     )
     reports_dir: Path = Field(default_factory=lambda: BASE_DIR / "reports")
+    audit_db_path: Path = Field(default_factory=lambda: BASE_DIR / "data" / "audit_history.db")
+    audit_retention_hours: int = Field(default=24, description="Default rolling retention period in hours for audit history")
 
     # LLM Settings
     llm_provider: str = Field(default="gemini", description="'gemini', 'openai', or 'deterministic'")

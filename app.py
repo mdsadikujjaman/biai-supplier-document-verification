@@ -11,13 +11,20 @@ import pandas as pd
 import streamlit as st
 
 from src.app_helpers import (
+    build_plain_language_findings,
     cleanup_directory,
+    get_all_decision_reasons,
     get_decision_color_theme,
+    get_evidence_traceability_items,
+    get_extracted_summary_fields,
+    get_financial_discrepancies,
+    get_next_step_guidance,
     load_benchmark_report_json,
     load_benchmark_report_markdown,
     save_uploaded_stream_to_temp,
     validate_uploaded_pdf,
 )
+from src.audit_history import AuditHistoryRepository, AuditRecord, DHAKA_TZ
 from src.config import settings
 from src.decision_engine import DecisionEngine
 from src.evaluation import EvaluationBenchmark
@@ -28,11 +35,17 @@ from src.models.schemas import (
 )
 from src.report_generator import (
     generate_batch_csv_summary,
+    generate_batch_excel_summary,
     generate_batch_json_summary,
     generate_batch_markdown_summary,
+    generate_benchmark_excel_report,
+    generate_individual_excel_report,
     generate_individual_json_report,
     generate_individual_markdown_report,
 )
+
+# Initialize audit repository
+audit_repo = AuditHistoryRepository(retention_hours=settings.audit_retention_hours)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -237,30 +250,76 @@ st.markdown(
 # ==============================================================================
 if nav_choice == "📊 Dashboard":
     st.subheader("Executive Verification Dashboard")
-    st.caption("Live monitoring of supplier document audits and compliance status.")
+    st.caption("Live and persistent audit monitoring of supplier document compliance (Asia/Dhaka Local Time).")
 
-    reports: List[DocumentVerificationReport] = st.session_state["live_reports"]
-    is_live = len(reports) > 0
+    # Date and Source Filtering Controls
+    f_col1, f_col2, f_col3 = st.columns([2, 2, 1])
 
-    if not is_live:
-        st.info(
-            "ℹ️ No live documents have been verified in this session yet. "
-            "Navigate to **Document Verification** to upload PDF quotations or run the **10 Sample Supplier Packs Demo**."
+    # Get unexpired records for filter options
+    all_unfiltered_records = audit_repo.get_records(limit=2000)
+    available_dates = sorted(list(set(r.date_dhaka for r in all_unfiltered_records)), reverse=True)
+
+    with f_col1:
+        date_filter_options = ["Today (Asia/Dhaka) & Last 24h", "All History"] + available_dates
+        selected_date_filter = st.selectbox(
+            "📅 Date Filter",
+            options=date_filter_options,
+            index=0,
+            help="Filter verification records by Asia/Dhaka date or rolling 24-hour window.",
         )
+    with f_col2:
+        source_filter = st.selectbox(
+            "📂 Source Filter",
+            options=["All Sources", "Upload", "Benchmark Demo"],
+            index=0,
+            help="Filter between real document uploads and benchmark demonstration runs.",
+        )
+    with f_col3:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Refresh Data", use_container_width=True):
+            st.rerun()
 
-    # Metric Cards Row
-    total_docs = len(reports)
-    approved_docs = sum(1 for r in reports if r.final_decision == DecisionEnum.APPROVE)
-    rejected_docs = sum(1 for r in reports if r.final_decision == DecisionEnum.REJECT)
-    review_docs = sum(1 for r in reports if r.final_decision == DecisionEnum.NEEDS_HUMAN_REVIEW)
+    # Determine filter query parameters
+    now_epoch = time.time()
+    if selected_date_filter == "Today (Asia/Dhaka) & Last 24h":
+        start_epoch_filter = now_epoch - (24 * 3600.0)
+        specific_date_filter = None
+    elif selected_date_filter == "All History":
+        start_epoch_filter = None
+        specific_date_filter = None
+    else:
+        start_epoch_filter = None
+        specific_date_filter = selected_date_filter
 
+    src_query = (
+        "UPLOAD"
+        if source_filter == "Upload"
+        else ("BENCHMARK_DEMO" if source_filter == "Benchmark Demo" else None)
+    )
+
+    # Fetch records based on the single source of truth
+    filtered_records: List[AuditRecord] = audit_repo.get_records(
+        date_filter=specific_date_filter,
+        source_filter=src_query,
+        start_epoch=start_epoch_filter,
+    )
+
+    metrics = audit_repo.get_dashboard_metrics(filtered_records)
+    total_docs = metrics["total_quotations"]
+    approved_docs = metrics["approved_count"]
+    rejected_docs = metrics["rejected_count"]
+    review_docs = metrics["review_count"]
+    approval_rate = metrics["approval_rate_pct"]
+
+    # Metric Cards Row (All calculated from identical filtered records)
     m1, m2, m3, m4 = st.columns(4)
     with m1:
         st.markdown(
             f"""
             <div class="metric-card">
-                <div class="metric-label">Audited Documents</div>
+                <div class="metric-label">Quotations Received</div>
                 <div class="metric-val">{total_docs}</div>
+                <div style="font-size: 0.8rem; color: #64748b; margin-top: 0.2rem;">Approval Rate: <strong>{approval_rate}%</strong></div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -271,6 +330,7 @@ if nav_choice == "📊 Dashboard":
             <div class="metric-card" style="border-left: 4px solid #10b981;">
                 <div class="metric-label">Approved</div>
                 <div class="metric-val" style="color: #166534;">{approved_docs}</div>
+                <div style="font-size: 0.8rem; color: #166534; margin-top: 0.2rem;">Policy Compliant</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -281,6 +341,7 @@ if nav_choice == "📊 Dashboard":
             <div class="metric-card" style="border-left: 4px solid #ef4444;">
                 <div class="metric-label">Rejected</div>
                 <div class="metric-val" style="color: #991b1b;">{rejected_docs}</div>
+                <div style="font-size: 0.8rem; color: #991b1b; margin-top: 0.2rem;">Confirmed Violations</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -291,6 +352,7 @@ if nav_choice == "📊 Dashboard":
             <div class="metric-card" style="border-left: 4px solid #f59e0b;">
                 <div class="metric-label">Needs Human Review</div>
                 <div class="metric-val" style="color: #92400e;">{review_docs}</div>
+                <div style="font-size: 0.8rem; color: #92400e; margin-top: 0.2rem;">Requires Manual Review</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -311,40 +373,65 @@ if nav_choice == "📊 Dashboard":
             ).set_index("Decision")
             st.bar_chart(dist_df, color="#3b82f6")
         else:
-            st.caption("Distribution chart will appear after processing documents.")
+            st.info("ℹ️ No verification records match the selected date filter to generate the chart.")
 
     with c2:
-        st.markdown("#### Session Information & Baseline Comparison")
+        st.markdown("#### Audit Persistence & Retention Status")
         st.markdown(
-            """
-            - **Processing Mode:** 100% Deterministic Sequential Pipeline (No autonomous drift)
-            - **Financial Engine:** Python `Decimal` (Round Half-Up)
-            - **Ground Truth Baseline:** 10 Supplier Packs evaluated with **100.0% Accuracy** and **0 False Approvals**
-            - **Audit Trail:** Every decision contains PDF page number and verbatim quote
+            f"""
+            - **Storage Engine:** Local SQLite with WAL mode (`{settings.audit_db_path.name}`)
+            - **Configured Retention:** Rolling `{settings.audit_retention_hours} hours` (expired records automatically purged)
+            - **Timezone Standardization:** Stored in **UTC**, grouped & displayed in **Asia/Dhaka (UTC+6)**
+            - **Pipeline Assurance:** 100% Deterministic Sequential Pipeline (No autonomous drift)
             """
         )
-        if st.session_state["last_processed_time"]:
-            st.caption(f"Last batch verified at: `{st.session_state['last_processed_time']}`")
-        if st.session_state["is_demo_run"]:
-            st.success("⚡ Currently displaying results from the 10-pack benchmark demonstration.")
+        st.caption(
+            "☁️ *Cloud Persistence Note: On ephemeral environments (Streamlit Community Cloud), SQLite files "
+            "are stored on local ephemeral disks. For permanent enterprise multi-user deployments, the repository "
+            "is architected for seamless swap to external PostgreSQL/Cloud SQL without modifying presentation logic.*"
+        )
 
-    if is_live:
+    if filtered_records:
         st.markdown("---")
-        st.markdown("#### Recent Verification Activity")
-        recent_data = []
-        for r in reports:
-            recent_data.append(
+        st.markdown("#### 🕒 Recent Verification Activity")
+        st.caption(f"Showing {len(filtered_records)} verification event(s) matching filter:")
+
+        activity_data = []
+        for r in filtered_records:
+            source_badge = "⚡ Demo" if r.source == "BENCHMARK_DEMO" else "📤 Upload"
+            primary_short = r.primary_reason
+            if len(r.all_decision_reasons) > 1:
+                primary_short = f"[{len(r.all_decision_reasons)} Issues] {r.primary_reason}"
+
+            activity_data.append(
                 {
-                    "Document": r.document_name,
+                    "Timestamp (Dhaka)": r.timestamp_dhaka,
                     "Supplier": r.supplier_name,
+                    "Document Name": r.document_name,
                     "Quotation #": r.quotation_no,
-                    "Item": r.matched_pr_item or "N/A",
-                    "Decision": r.final_decision.value,
-                    "Primary Reason": r.primary_reason,
+                    "PR Item": r.matched_pr_item or "N/A",
+                    "Decision": r.final_decision,
+                    "Primary Reason": primary_short,
+                    "Source": source_badge,
                     "Latency (ms)": f"{r.processing_time_ms:.1f}",
                 }
             )
-        st.dataframe(pd.DataFrame(recent_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(activity_data), use_container_width=True, hide_index=True)
+
+        # Excel Download Option on Dashboard
+        st.markdown("#### 📥 Export Audit Records")
+        st.caption("Download the complete multi-worksheet audit ledger for executive review or ERP integration.")
+        excel_bytes = audit_repo.generate_excel_export(filtered_records)
+        st.download_button(
+            label="📊 Download Filtered Audit Ledger (Excel .xlsx)",
+            data=excel_bytes,
+            file_name=f"supplier_audit_ledger_{time.strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    else:
+        st.info("ℹ️ No verification activity recorded for the selected filter period.")
+
 
 
 # ==============================================================================
@@ -410,6 +497,7 @@ elif nav_choice == "🔍 Document Verification":
                             rep = engine.verify_document(f_path)
                             batch_reports.append(rep)
 
+                        audit_repo.record_batch(batch_reports, source="UPLOAD")
                         st.session_state["live_reports"] = batch_reports
                         st.session_state["last_processed_time"] = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
                         st.session_state["is_demo_run"] = False
@@ -456,6 +544,7 @@ elif nav_choice == "🔍 Document Verification":
                     rep = engine.verify_document(p_file)
                     batch_reports.append(rep)
 
+                audit_repo.record_batch(batch_reports, source="BENCHMARK_DEMO")
                 st.session_state["live_reports"] = batch_reports
                 st.session_state["last_processed_time"] = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
                 st.session_state["is_demo_run"] = True
@@ -464,41 +553,276 @@ elif nav_choice == "🔍 Document Verification":
                 time.sleep(0.5)
                 st.rerun()
 
-    # Batch Download Export Section
+    # --------------------------------------------------------------------------
+    # ON-SCREEN HUMAN-FRIENDLY VERIFICATION RESULTS
+    # --------------------------------------------------------------------------
     if st.session_state["live_reports"]:
+        reports: List[DocumentVerificationReport] = st.session_state["live_reports"]
         st.markdown("---")
-        st.markdown("#### 📥 Batch Audit Export")
-        st.caption("Export audited verification findings for record keeping and reporting.")
 
-        b_csv = generate_batch_csv_summary(st.session_state["live_reports"])
-        b_md = generate_batch_markdown_summary(st.session_state["live_reports"])
-        b_json = generate_batch_json_summary(st.session_state["live_reports"])
+        # 1. Multi-Document Selector & Batch Overview
+        if len(reports) > 1:
+            st.markdown("### 📋 Verification Summary")
+            c_tot, c_app, c_rej, c_rev = st.columns(4)
+            app_count = sum(1 for r in reports if r.final_decision == DecisionEnum.APPROVE)
+            rej_count = sum(1 for r in reports if r.final_decision == DecisionEnum.REJECT)
+            rev_count = sum(1 for r in reports if r.final_decision == DecisionEnum.NEEDS_HUMAN_REVIEW)
 
-        d1, d2, d3 = st.columns(3)
-        with d1:
+            with c_tot:
+                st.metric("Total Quotations", len(reports))
+            with c_app:
+                st.metric("🟢 Approved", app_count)
+            with c_rej:
+                st.metric("🔴 Rejected", rej_count)
+            with c_rev:
+                st.metric("🟡 Needs Review", rev_count)
+
+            doc_options = [
+                f"{idx + 1}. [{r.final_decision.value}] {r.supplier_name} — {r.document_name}"
+                for idx, r in enumerate(reports)
+            ]
+            current_idx = min(st.session_state.get("selected_doc_index", 0), len(reports) - 1)
+            selected_label = st.selectbox(
+                "Select Quotation to Inspect On-Screen:",
+                options=doc_options,
+                index=current_idx,
+                help="Choose which supplier quotation to review in detail directly below.",
+            )
+            selected_idx = doc_options.index(selected_label)
+            st.session_state["selected_doc_index"] = selected_idx
+            rep = reports[selected_idx]
+        else:
+            rep = reports[0]
+
+        theme = get_decision_color_theme(rep.final_decision)
+        badge_class = {
+            DecisionEnum.APPROVE: "badge-approve",
+            DecisionEnum.REJECT: "badge-reject",
+            DecisionEnum.NEEDS_HUMAN_REVIEW: "badge-review",
+        }.get(rep.final_decision, "badge-review")
+
+        # 2. Prominent Decision Hero Card (Aggregating all contributing reasons)
+        all_reasons = get_all_decision_reasons(rep)
+        if len(all_reasons) > 1:
+            reasons_html = f"<strong>Contributing Decision Findings ({len(all_reasons)} Issues):</strong><ul style='margin: 0.35rem 0 0 1.2rem; padding: 0;'>"
+            for r_text in all_reasons:
+                reasons_html += f"<li style='margin-bottom: 0.25rem;'>{r_text}</li>"
+            reasons_html += "</ul>"
+        else:
+            reasons_html = f"<strong>Decision Finding:</strong> {all_reasons[0]}"
+
+        st.markdown(
+            f"""
+            <div style="background: {theme['bg']}; border: 1.5px solid {theme['border']}; border-left: 8px solid {theme['border']}; border-radius: 8px; padding: 1.4rem; margin-top: 1rem; margin-bottom: 1.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div>
+                        <div style="font-size: 0.85rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em;">
+                            Document Verification Result
+                        </div>
+                        <h2 style="margin: 0.2rem 0 0.4rem 0; color: #0f172a; font-size: 1.5rem; font-weight: 800;">
+                            {rep.supplier_name}
+                        </h2>
+                        <div style="color: #475569; font-size: 0.95rem;">
+                            <strong>Quotation No:</strong> <code>{rep.quotation_no}</code> • 
+                            <strong>File:</strong> <code>{rep.document_name}</code> • 
+                            <strong>Target Item:</strong> <code>{rep.matched_pr_item or 'N/A'}</code>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="{badge_class}" style="font-size: 1.15rem; padding: 0.45rem 1rem;">
+                            {theme['icon']} {rep.final_decision.value}
+                        </span>
+                    </div>
+                </div>
+                <hr style="border: 0; border-top: 1px solid {theme['border']}; margin: 0.9rem 0; opacity: 0.5;">
+                <div style="font-size: 1.02rem; color: #1e293b; line-height: 1.45;">
+                    {reasons_html}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Dedicated Financial Discrepancies Box (if arithmetic mismatches exist)
+        math_discrepancies = get_financial_discrepancies(rep)
+        if math_discrepancies:
+            st.markdown(
+                """
+                <div style="background: #fff1f2; border: 1px solid #fda4af; border-left: 5px solid #e11d48; border-radius: 6px; padding: 1rem 1.2rem; margin-bottom: 1.25rem;">
+                    <h4 style="margin: 0 0 0.4rem 0; color: #9f1239; font-size: 1.05rem;">
+                        ⚠️ Financial & Arithmetic Discrepancy Comparison
+                    </h4>
+                    <p style="margin: 0 0 0.6rem 0; color: #4c0519; font-size: 0.9rem;">
+                        Mathematical inconsistency detected between supplier-quoted amounts and system-verified calculations.
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            df_discrepancies = pd.DataFrame([
+                {
+                    "Component": d["Component"],
+                    "Supplier-Quoted Amount": d["Quoted Amount"],
+                    "System-Recalculated Amount": d["Recalculated Amount"],
+                    "Absolute Difference": d["Difference"],
+                    "Calculation Explanation": d["Explanation"],
+                }
+                for d in math_discrepancies
+            ])
+            st.dataframe(df_discrepancies, use_container_width=True, hide_index=True)
+
+        # 3. Next-Step Guidance for Procurement Manager
+        guidance = get_next_step_guidance(rep.final_decision)
+        if guidance["alert_type"] == "success":
+            st.success(f"### {guidance['title']}\n\n{guidance['message']}\n\n*{guidance['note']}*")
+        elif guidance["alert_type"] == "error":
+            st.error(f"### {guidance['title']}\n\n{guidance['message']}\n\n*{guidance['note']}*")
+        else:
+            st.warning(f"### {guidance['title']}\n\n{guidance['message']}\n\n*{guidance['note']}*")
+
+        # 4. Plain-Language Findings Table
+        st.markdown("### 📋 Verification Checks Summary")
+        st.caption("Plain-language results for all company compliance criteria and purchase request alignments.")
+        findings = build_plain_language_findings(rep)
+        df_findings = pd.DataFrame([
+            {"Check": f["Check"], "Result": f["Result"], "Explanation": f["Explanation"]}
+            for f in findings
+        ])
+        st.dataframe(df_findings, use_container_width=True, hide_index=True)
+
+        # 5. Extracted Quotation Details Section
+        st.markdown("### 📄 Extracted Quotation Details")
+        st.caption("Key commercial and contractual figures extracted from the supplier quotation (with missing/ambiguous fields highlighted).")
+        summary_fields = get_extracted_summary_fields(rep)
+
+        col_com, col_con = st.columns(2)
+        with col_com:
+            st.markdown("#### 💰 Commercial & Financial Breakdown")
+            st.markdown(
+                f"""
+                - **Item Code & Description:** {summary_fields.get('Item code & description', 'N/A')}
+                - **Quoted Quantity & Unit:** `{summary_fields.get('Quantity & unit', 'N/A')}`
+                - **Quoted Unit Price:** `{summary_fields.get('Unit price', 'N/A')}`
+                - **Quoted Line Amount:** `{summary_fields.get('Quoted line amount', 'N/A')}`
+                - **Recalculated Line Amount:** `{summary_fields.get('Recalculated line amount', 'N/A')}`
+                - **Subtotal:** `{summary_fields.get('Subtotal', 'N/A')}`
+                - **VAT (15%):** `{summary_fields.get('VAT', 'N/A')}`
+                - **Grand Total Amount:** **`{summary_fields.get('Grand total', 'N/A')}`**
+                """
+            )
+        with col_con:
+            st.markdown("#### 📜 Terms, Schedule & Compliance")
+            st.markdown(
+                f"""
+                - **Advance Payment Terms:** `{summary_fields.get('Advance payment', 'N/A')}`
+                - **Credit / Payment Terms:** `{summary_fields.get('Credit / payment terms', 'N/A')}`
+                - **Delivery Period:** `{summary_fields.get('Delivery period', 'N/A')}`
+                - **Late-Delivery Penalty:** `{summary_fields.get('Late-delivery penalty', 'N/A')}`
+                - **Quotation Validity:** `{summary_fields.get('Quotation validity', 'N/A')}`
+                - **Tax Registration:** `{summary_fields.get('TIN / BIN', 'N/A')}`
+                """
+            )
+
+        # 6. Expandable Evidence Section (Distinguishing Source Verification vs Field Interpretation)
+        with st.expander("🔍 View Supporting Evidence & Grounded Citations", expanded=False):
+            st.caption(
+                "Verbatim citations extracted from the original PDF with page numbers, layout verification, "
+                "and explicit field interpretation reliability."
+            )
+            evidence_items = get_evidence_traceability_items(rep)
+            if evidence_items:
+                evidence_df = pd.DataFrame([
+                    {
+                        "Field / Clause": it["Field"],
+                        "Extracted Value": it["Extracted Value"],
+                        "Verbatim PDF Quote": f'"{it["Verbatim PDF Quote"]}"' if it["Verbatim PDF Quote"] else "N/A",
+                        "Page": f"Page {it['Page Number']}",
+                        "Source Text on Page": "✅ Verified" if it.get("Source Verified") else "⚠️ Unverified",
+                        "Interpretation Status": it.get("Interpretation Status", "EXTRACTED"),
+                    }
+                    for it in evidence_items
+                ])
+                st.dataframe(evidence_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No supporting evidence items recorded.")
+
+        # 7. Secondary Export & Downloads Section
+        st.markdown("---")
+        st.markdown("#### 📥 Export Audit Reports")
+        st.caption("Download reports for offline record keeping or ERP integration (optional secondary option).")
+
+        # Individual report download
+        indiv_xlsx = generate_individual_excel_report(rep)
+        indiv_md = generate_individual_markdown_report(rep)
+        indiv_json = generate_individual_json_report(rep)
+
+        down_col1, down_col2, down_col3 = st.columns(3)
+        with down_col1:
             st.download_button(
-                label="📄 Download Batch Summary (CSV)",
-                data=b_csv,
-                file_name=f"batch_verification_summary_{time.strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
+                label="📊 Download This Report (Excel)",
+                data=indiv_xlsx,
+                file_name=f"audit_report_{rep.document_name.replace('.pdf', '')}_{time.strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
-        with d2:
+        with down_col2:
             st.download_button(
-                label="📝 Download Batch Report (Markdown)",
-                data=b_md,
-                file_name=f"batch_verification_report_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                label="📄 Download This Report (Markdown)",
+                data=indiv_md,
+                file_name=f"audit_report_{rep.document_name.replace('.pdf', '')}_{time.strftime('%Y%m%d_%H%M%S')}.md",
                 mime="text/markdown",
                 use_container_width=True,
             )
-        with d3:
+        with down_col3:
             st.download_button(
-                label="📊 Download Batch Data (JSON)",
-                data=b_json,
-                file_name=f"batch_verification_data_{time.strftime('%Y%m%d_%H%M%S')}.json",
+                label="📊 Download This Report (JSON)",
+                data=indiv_json,
+                file_name=f"audit_report_{rep.document_name.replace('.pdf', '')}_{time.strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json",
                 use_container_width=True,
             )
+
+        # Batch summary download if multiple documents
+        if len(reports) > 1:
+            st.markdown("##### Batch Exports (All Verified Documents)")
+            b_csv = generate_batch_csv_summary(reports)
+            b_md = generate_batch_markdown_summary(reports)
+            b_json = generate_batch_json_summary(reports)
+            b_xlsx = generate_batch_excel_summary(reports)
+
+            d1, d2, d3, d4 = st.columns(4)
+            with d1:
+                st.download_button(
+                    label="📄 Batch Summary (CSV)",
+                    data=b_csv,
+                    file_name=f"batch_verification_summary_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+            with d2:
+                st.download_button(
+                    label="📝 Batch Report (Markdown)",
+                    data=b_md,
+                    file_name=f"batch_verification_report_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                )
+            with d3:
+                st.download_button(
+                    label="📊 Batch Data (JSON)",
+                    data=b_json,
+                    file_name=f"batch_verification_data_{time.strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
+            with d4:
+                st.download_button(
+                    label="📈 Batch Workbook (Excel)",
+                    data=b_xlsx,
+                    file_name=f"batch_verification_workbook_{time.strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
 
 
 # ==============================================================================
@@ -729,11 +1053,20 @@ elif nav_choice == "🔬 Deep Audit Inspector":
         # TAB 5: Download Individual Report
         with tab_download:
             st.markdown("#### Export Individual Audit Report")
+            ind_xlsx = generate_individual_excel_report(rep)
             ind_md = generate_individual_markdown_report(rep)
             ind_json = generate_individual_json_report(rep)
 
-            col_d1, col_d2 = st.columns(2)
+            col_d1, col_d2, col_d3 = st.columns(3)
             with col_d1:
+                st.download_button(
+                    label="📊 Download Excel Audit Report",
+                    data=ind_xlsx,
+                    file_name=f"audit_report_{rep.document_name.replace('.pdf', '')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            with col_d2:
                 st.download_button(
                     label="📝 Download Markdown Audit Report",
                     data=ind_md,
@@ -741,7 +1074,7 @@ elif nav_choice == "🔬 Deep Audit Inspector":
                     mime="text/markdown",
                     use_container_width=True,
                 )
-            with col_d2:
+            with col_d3:
                 st.download_button(
                     label="📊 Download JSON Audit Report",
                     data=ind_json,
@@ -814,8 +1147,17 @@ elif nav_choice == "📈 Benchmark & Evaluation":
 
         st.markdown("---")
         st.markdown("#### 📥 Download Benchmark Reports")
-        b1, b2 = st.columns(2)
+        bench_xlsx = generate_benchmark_excel_report(bench_data)
+        b1, b2, b3 = st.columns(3)
         with b1:
+            st.download_button(
+                "📊 Download Benchmark Report (Excel)",
+                data=bench_xlsx,
+                file_name="benchmark_audit_summary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        with b2:
             if bench_md:
                 st.download_button(
                     "📝 Download Full Benchmark Report (Markdown)",
@@ -824,7 +1166,7 @@ elif nav_choice == "📈 Benchmark & Evaluation":
                     mime="text/markdown",
                     use_container_width=True,
                 )
-        with b2:
+        with b3:
             st.download_button(
                 "📊 Download Benchmark Data (JSON)",
                 data=json.dumps(bench_data, indent=2),
