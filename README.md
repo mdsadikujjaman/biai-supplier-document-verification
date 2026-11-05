@@ -52,54 +52,65 @@ The system produces one of three unambiguous decisions for every supplier quotat
 
 ```mermaid
 flowchart TD
-    subgraph S1["Stage 1: Document Ingestion"]
+    subgraph Stage1 ["Stage 1: Document Ingestion"]
         PDF["Supplier Quotation PDF"] --> SHA["SHA-256 Provenance Hashing"]
         SHA --> Ingest["PyMuPDF / pypdf Text Parser"]
         Ingest --> IngestDoc["IngestedDocument Container"]
     end
 
-    subgraph S2["Stage 2: Structured Extraction & Normalization"]
-        IngestDoc --> Extractor["ExtractionEngine\n(Deterministic Regex / Hybrid LLM)"]
-        Extractor --> Norm["CanonicalNormalizer\n(Decimal, Days, Percentages)"]
-        Norm --> Provenance["FieldProvenance Verification\n(Verbatim Text & Page Checks)"]
+    subgraph Stage2 ["Stage 2: Structured Extraction and Normalization"]
+        IngestDoc --> Extractor["ExtractionEngine<br/>(Deterministic Regex / Hybrid LLM)"]
+        Extractor --> Norm["CanonicalNormalizer<br/>(Decimal, Days, Percentages)"]
+        Norm --> Provenance["FieldProvenance Verification<br/>(Verbatim Text and Page Checks)"]
         Provenance --> Quotation["ExtractedQuotation Schema"]
     end
 
-    subgraph S3["Stage 3: Arithmetic Consistency Audit"]
-        Quotation --> LineMath["Line Amounts (Qty × Price)"]
+    subgraph Stage3 ["Stage 3: Arithmetic Consistency Audit"]
+        Quotation --> LineMath["Line Amounts (Qty x Price)"]
         LineMath --> SubtotalMath["Subtotal Sum Reconciliation"]
         SubtotalMath --> VATMath["15% Statutory VAT Recalculation"]
         VATMath --> TotalMath["Grand Total Consistency (Decimal)"]
         TotalMath --> MathAudit["ArithmeticAuditResult"]
     end
 
-    subgraph S4["Stage 4: Purchase Request Benchmark Alignment"]
-        Quotation & PR["purchase-request.csv\n(PR-2026-114)"] --> Comparator["PurchaseRequestComparator"]
-        Comparator --> QtyTol["Quantity Variance (±5% Tolerance)"]
-        Comparator --> PriceCeil["Price Ceiling (+3% Max Limit)"]
-        Comparator --> ItemMatch["Item Code & Unit Compatibility"]
-        QtyTol & PriceCeil & ItemMatch --> PRReport["PRComparisonReport"]
+    subgraph Stage4 ["Stage 4: Purchase Request Benchmark Alignment"]
+        PR["Purchase Request CSV<br/>(PR-2026-114)"] --> Comparator["PurchaseRequestComparator"]
+        Quotation --> Comparator
+        Comparator --> QtyTol["Quantity Variance Check (+/- 5% Tolerance)"]
+        Comparator --> PriceCeil["Price Ceiling Check (+3% Max Limit)"]
+        Comparator --> ItemMatch["Item Code and Unit Compatibility Check"]
+        QtyTol --> PRReport["PRComparisonReport"]
+        PriceCeil --> PRReport
+        ItemMatch --> PRReport
     end
 
-    subgraph S5["Stage 5: Business Rule Evaluation"]
-        Quotation & MathAudit & PRReport --> RulesEngine["CompanyRuleEngine\n(company-rules.md)"]
-        RulesEngine --> RejectRules["Reject Rules (1-5)"]
-        RulesEngine --> ReviewRules["Human Review Rules (1-7)"]
+    subgraph Stage5 ["Stage 5: Business Rule Evaluation"]
+        Quotation --> RulesEngine["CompanyRuleEngine<br/>(company-rules.md)"]
+        MathAudit --> RulesEngine
+        PRReport --> RulesEngine
+        RulesEngine --> RejectRules["Reject Rules (Rules 1-5)"]
+        RulesEngine --> ReviewRules["Human Review Rules (Rules 1-7)"]
         RulesEngine --> Integrity["Matching Integrity Audit"]
     end
 
-    subgraph S6["Stage 6: Precedence Decision Synthesis"]
-        RejectRules & ReviewRules & Integrity --> Precedence["Decision Precedence Engine"]
-        Precedence --> C1{"Confirmed\nRejection?"}
-        C1 -- Yes --> REJECT["REJECT 🔴"]
-        C1 -- No --> C2{"Review Rule,\nUncertainty,\nor Math Error?"}
-        C2 -- Yes --> REVIEW["NEEDS HUMAN REVIEW 🟡"]
-        C2 -- No --> APPROVE["APPROVE 🟢"]
+    subgraph Stage6 ["Stage 6: Precedence Decision Synthesis"]
+        RejectRules --> Precedence["Decision Precedence Engine"]
+        ReviewRules --> Precedence
+        Integrity --> Precedence
+        Precedence --> CheckReject{"Confirmed Rejection?"}
+        CheckReject -->|Yes| DecisionReject["REJECT"]
+        CheckReject -->|No| CheckReview{"Review Rule, Uncertainty, or Math Error?"}
+        CheckReview -->|Yes| DecisionReview["NEEDS HUMAN REVIEW"]
+        CheckReview -->|No| DecisionApprove["APPROVE"]
     end
 
-    subgraph S7["Stage 7: Presentation & Reporting"]
-        REJECT & REVIEW & APPROVE --> WebUI["Streamlit Interactive UI (app.py)"]
-        REJECT & REVIEW & APPROVE --> Reports["Reports: Excel, Markdown, JSON, CSV"]
+    subgraph Stage7 ["Stage 7: Presentation and Reporting"]
+        DecisionReject --> WebUI["Streamlit Interactive UI<br/>(app.py)"]
+        DecisionReview --> WebUI
+        DecisionApprove --> WebUI
+        DecisionReject --> Reports["Multi-Format Reports<br/>(Excel, Markdown, JSON, CSV)"]
+        DecisionReview --> Reports
+        DecisionApprove --> Reports
     end
 ```
 
